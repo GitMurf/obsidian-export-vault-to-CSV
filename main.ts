@@ -1,5 +1,4 @@
-import { appendFile } from 'fs';
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TAbstractFile, TFile, TFolder } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, TAbstractFile, TFile, TFolder } from 'obsidian';
 declare module "obsidian" {
     interface WorkspaceLeaf {
         containerEl: HTMLElement;

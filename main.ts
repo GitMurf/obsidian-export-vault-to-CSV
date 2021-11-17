@@ -1,4 +1,47 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { appendFile } from 'fs';
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TAbstractFile, TFile, TFolder } from 'obsidian';
+declare module "obsidian" {
+    interface WorkspaceLeaf {
+        containerEl: HTMLElement;
+    }
+}
+type RowUid = number;
+interface CsvRow {
+    uid: RowUid;
+    title: string;
+    parent: RowUid;
+    block: string;
+    order: number;
+    created: Date;
+    modified: Date;
+    folderParent: string;
+    folderPath: string;
+    fileName: string;
+    fileExt: string;
+    rowType: string;
+    blockType: string;
+}
+const pluginName = 'Export Vault to CSV';
+const CsvHeadersCore = "uid,title,parent,string,order,create-time";
+const CsvHeadersAdd = "edit-time,folder,folder-path,filename,file-ext,row-type,block-type";
+const exportBlankLines: boolean = true;
+const rowTypes = {
+    folder: "folder",
+    file: "file",
+    block: "block"
+}
+const blockTypes = {
+    file: "file",
+    folder: "folder",
+    line: "line",
+    multi: "multi",
+    header: "header",
+    list: "list",
+    code: "code",
+    quote: "quote"
+}
+let csvUid: RowUid;
+let csvFileExport: CsvRow[][];
 
 // Remember to rename these classes and interfaces!
 
@@ -14,72 +57,24 @@ export default class MyPlugin extends Plugin {
     settings: MyPluginSettings;
 
     async onload() {
+        console.log("loading plugin: " + pluginName);
         await this.loadSettings();
 
-        // This creates an icon in the left ribbon.
-        const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-            // Called when the user clicks the icon.
-            new Notice('This is a notice!');
-        });
-        // Perform additional things with the ribbon
-        ribbonIconEl.addClass('my-plugin-ribbon-class');
-
-        // This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-        const statusBarItemEl = this.addStatusBarItem();
-        statusBarItemEl.setText('Status Bar Text');
-
-        // This adds a simple command that can be triggered anywhere
+        // Trigger the export to CSV with command palette
         this.addCommand({
-            id: 'open-sample-modal-simple',
-            name: 'Open sample modal (simple)',
+            id: 'export-vault-to-csv',
+            name: 'Export the current Vault to CSV',
             callback: () => {
-                new SampleModal(this.app).open();
-            }
-        });
-        // This adds an editor command that can perform some operation on the current editor instance
-        this.addCommand({
-            id: 'sample-editor-command',
-            name: 'Sample editor command',
-            editorCallback: (editor: Editor, view: MarkdownView) => {
-                console.log(editor.getSelection());
-                editor.replaceSelection('Sample Editor Command');
-            }
-        });
-        // This adds a complex command that can check whether the current state of the app allows execution of the command
-        this.addCommand({
-            id: 'open-sample-modal-complex',
-            name: 'Open sample modal (complex)',
-            checkCallback: (checking: boolean) => {
-                // Conditions to check
-                const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-                if (markdownView) {
-                    // If checking is true, we're simply "checking" if the command can be run.
-                    // If checking is false, then we want to actually perform the operation.
-                    if (!checking) {
-                        new SampleModal(this.app).open();
-                    }
-
-                    // This command will only show up in Command Palette when the check function returns true
-                    return true;
-                }
+                exportToCsv(this.app, this);
             }
         });
 
         // This adds a settings tab so the user can configure various aspects of the plugin
         this.addSettingTab(new SampleSettingTab(this.app, this));
-
-        // If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-        // Using this function will automatically remove the event listener when this plugin is disabled.
-        this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-            console.log('click', evt);
-        });
-
-        // When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-        this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
     }
 
     onunload() {
-
+        console.log("Unloading plugin: " + pluginName);
     }
 
     async loadSettings() {
@@ -88,22 +83,6 @@ export default class MyPlugin extends Plugin {
 
     async saveSettings() {
         await this.saveData(this.settings);
-    }
-}
-
-class SampleModal extends Modal {
-    constructor(app: App) {
-        super(app);
-    }
-
-    onOpen() {
-        const { contentEl } = this;
-        contentEl.setText('Woah!');
-    }
-
-    onClose() {
-        const { contentEl } = this;
-        contentEl.empty();
     }
 }
 
@@ -134,4 +113,157 @@ class SampleSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
     }
+}
+
+async function exportToCsv(thisApp: App, thisPlugin: MyPlugin) {
+    csvUid = 1;
+    csvFileExport = [];
+    const rootFolder: TFolder = thisApp.vault.getRoot();
+    console.log(`starting the looping for the export`);
+    await getFilesFromFolder(thisApp, rootFolder, 0);
+    console.log(`DONE with the looping for the export`);
+    await writeCsvFile(thisApp, csvFileExport);
+    console.log(`FINISHED the export and writing to file`);
+}
+
+async function getFilesFromFolder(thisApp: App, thisFolder: TFolder, parentFolderId: number) {
+    //console.log(`    Looping through FOLDER: "${thisFolder.path}"`);
+    const thisFolderId = await outputFolderToCsv(thisApp, thisFolder, parentFolderId);
+    const fileExtToExport: string[] = ["md"];
+    const childrenFilesAndFolders: TAbstractFile[] = thisFolder.children;
+    for (const eachFileOrFolder of childrenFilesAndFolders) {
+        if (eachFileOrFolder instanceof TFolder) {
+            //TFolder - recursive call to getFilesFromFolder() function
+            await getFilesFromFolder(thisApp, eachFileOrFolder, thisFolderId);
+        } else if (eachFileOrFolder instanceof TFile) {
+            //TFile
+            const thisFile: TFile = eachFileOrFolder;
+            if (fileExtToExport.includes(thisFile.extension)) {
+                await outputFileToCsv(thisApp, thisFile, thisFolderId);
+            }
+        }
+    }
+}
+
+async function outputFolderToCsv(thisApp: App, thisFolder: TFolder, parentFolderId: number) {
+    let foldName = thisFolder.name;
+    if (foldName === "") { foldName = "/" }
+    foldName = cleanString(foldName);
+    let foldPar: string;
+    let foldPath: string;
+    if (thisFolder.parent) {
+        foldPar = thisFolder.parent.name;
+        if (foldPar === "") { foldPar = "/" }
+        foldPath = thisFolder.parent.path;
+    } else {
+        foldPar = "vault";
+        foldPath = "vault";
+    }
+    foldPar = cleanString(foldPar);
+    foldPath = cleanString(foldPath);
+    let csvFolder: CsvRow[] = [];
+    const folderRow: CsvRow = {
+        uid: csvUid,
+        title: foldName,
+        parent: parentFolderId,
+        block: "",
+        order: -1,
+        created: null,
+        modified: null,
+        folderParent: foldPar,
+        folderPath: foldPath,
+        fileName: null,
+        fileExt: null,
+        rowType: rowTypes.folder,
+        blockType: blockTypes.folder
+    }
+    csvFolder.push(folderRow);
+    csvUid++;
+    csvFileExport.push(csvFolder);
+    return folderRow.uid;
+}
+
+async function outputFileToCsv(thisApp: App, thisFile: TFile, parentFolderId: number) {
+    //console.log(`        Looping through FILE: "${thisFile.basename}"`);
+    let foldPar = thisFile.parent.name;
+    if (foldPar === "" || !foldPar) { foldPar = "/" }
+    foldPar = cleanString(foldPar);
+    const foldPath = cleanString(thisFile.parent.path);
+    const fileNm = cleanString(thisFile.basename);
+    const fileEx = cleanString(thisFile.extension);
+    let csvFile: CsvRow[] = [];
+    const fileRow: CsvRow = {
+        uid: csvUid,
+        title: cleanString(thisFile.basename),
+        parent: parentFolderId,
+        block: "",
+        order: 0,
+        created: new Date(thisFile.stat.ctime),
+        modified: new Date(thisFile.stat.mtime),
+        folderParent: foldPar,
+        folderPath: foldPath,
+        fileName: fileNm,
+        fileExt: fileEx,
+        rowType: rowTypes.file,
+        blockType: blockTypes.file
+    }
+    csvFile.push(fileRow);
+    csvUid++;
+    const fileCont = await thisApp.vault.read(thisFile);
+    const allLines = fileCont.split("\n");
+    let lnCtr: number = 1;
+    allLines.forEach(eachLine => {
+        if (exportBlankLines || eachLine !== "") {
+            const thisRow: CsvRow = {
+                uid: csvUid,
+                title: "",
+                parent: fileRow.uid,
+                block: cleanString(eachLine),
+                order: lnCtr,
+                created: new Date(thisFile.stat.ctime),
+                modified: new Date(thisFile.stat.mtime),
+                folderParent: foldPar,
+                folderPath: foldPath,
+                fileName: fileNm,
+                fileExt: fileEx,
+                rowType: rowTypes.block,
+                blockType: blockTypes.line
+            }
+            csvFile.push(thisRow);
+            csvUid++;
+            lnCtr++;
+        }
+    })
+    csvFileExport.push(csvFile);
+}
+
+async function writeCsvFile(thisApp: App, theCsvFile: CsvRow[][]) {
+    /*Resources on BOM:
+        https://stackoverflow.com/a/32002335
+        https://csv.js.org/parse/options/bom/
+        https://stackoverflow.com/questions/17879198/adding-utf-8-bom-to-string-blob
+    */
+    const utfBOM = `\ufeff`;
+    let csvOutputFileName = 'VaultToCsv';
+    csvOutputFileName += `_${window.moment().format('YYYY_MM_DD_HHmmss')}`;
+    let csvData: string = `${CsvHeadersCore},${CsvHeadersAdd}`;
+    theCsvFile.forEach(eachFile => {
+        eachFile.forEach(eachRow => {
+            const rowString = Object.values(eachRow).join(",");
+            csvData += `\n${rowString}`;
+        })
+    })
+    const csvFile = new Blob([`${utfBOM}${csvData}`], { type: 'text/csv;charset=utf-8;' });
+    const csvUrl = URL.createObjectURL(csvFile);
+    let hiddenElement = document.createElement('a');
+    hiddenElement.href = csvUrl;
+    hiddenElement.target = '_blank';
+    hiddenElement.download = csvOutputFileName + '.csv';
+    hiddenElement.click();
+}
+
+function cleanString(theString: string) {
+    theString = theString.replace(/"/g, `""`);
+    theString = `"${theString}"`;
+    return theString;
 }

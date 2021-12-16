@@ -1,8 +1,27 @@
 import { App, Plugin, PluginSettingTab, Setting, TAbstractFile, TFile, TFolder } from 'obsidian';
+import { readFile, writeFile, readFileSync } from 'fs';
 declare module "obsidian" {
     interface WorkspaceLeaf {
         containerEl: HTMLElement;
     }
+}
+// Roam blocks for export from CSV to JSON
+type RoamUser = {
+    ":user/uid": string
+}
+interface RoamBlock {
+    uid: string;
+    "create-time": number;
+    "edit-time": number;
+    ":create/user": RoamUser
+    ":edit/user": RoamUser
+    children?: RoamBlock[]
+}
+interface RoamBlockPage extends RoamBlock {
+    title: string;
+}
+interface RoamBlockBlock extends RoamBlock {
+    string: string;
 }
 type RowUid = number;
 interface CsvRow {
@@ -41,6 +60,7 @@ const blockTypes = {
 }
 let csvUid: RowUid;
 let csvFileExport: CsvRow[][];
+const myRoamUser = { ":user/uid": "R1S40rNV4ANUNdGed7VaElqiO783" }
 
 // Remember to rename these classes and interfaces!
 
@@ -65,6 +85,15 @@ export default class MyPlugin extends Plugin {
             name: 'Export the current Vault to CSV',
             callback: () => {
                 exportToCsv(this.app, this);
+            }
+        });
+
+        // Trigger the conversion from CSV to JSON
+        this.addCommand({
+            id: 'convert-csv-to-json',
+            name: 'Convert CSV to JSON',
+            callback: () => {
+                csvToJson();
             }
         });
 
@@ -112,6 +141,12 @@ class SampleSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
     }
+}
+
+async function csvToJson() {
+    let filePath = `C:\\Users\\ShawnMurphy\\OneDrive - SAM Dynamics\\1_Docs\\Tools\\NoloCron\\TheForce.csv`;
+    const fileCont: string = readFileSync(filePath).toString();
+    console.log(fileCont);
 }
 
 async function exportToCsv(thisApp: App, thisPlugin: MyPlugin) {

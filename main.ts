@@ -1,4 +1,4 @@
-import { App, Plugin, PluginSettingTab, Setting, TAbstractFile, TFile, TFolder } from 'obsidian';
+import { App, FileSystemAdapter, Plugin, PluginSettingTab, Setting, TAbstractFile, TFile, TFolder } from 'obsidian';
 import { readFile, writeFile, readFileSync } from 'fs';
 declare module "obsidian" {
     interface WorkspaceLeaf {
@@ -23,17 +23,18 @@ interface RoamBlockPage extends RoamBlock {
 interface RoamBlockBlock extends RoamBlock {
     string: string;
 }
-type RowUid = number;
+type HashUid = string; // Now using the getStringHash function to create a unique ID for each block
 interface CsvRow {
-    uid: RowUid;
+    uid: HashUid;
     title: string;
-    parent: RowUid;
+    parent: HashUid;
     block: string;
     order: number;
     created: Date;
     modified: Date;
     folderParent: string;
-    folderPath: string;
+    folderPathRel: string;
+    folderPathAbs: string;
     fileName: string;
     fileExt: string;
     rowType: string;
@@ -41,7 +42,7 @@ interface CsvRow {
 }
 const pluginName = 'Export Vault to CSV';
 const CsvHeadersCore = "uid,title,parent,string,order,create-time";
-const CsvHeadersAdd = "edit-time,folder,folder-path,filename,file-ext,row-type,block-type";
+const CsvHeadersAdd = "edit-time,folder,folder-path-rel,folder-path-abs,filename,file-ext,row-type,block-type";
 const exportBlankLines: boolean = true;
 const rowTypes = {
     folder: "folder",
@@ -58,8 +59,9 @@ const blockTypes = {
     code: "code",
     quote: "quote"
 }
-let csvUid: RowUid;
+let csvUid: number; // This is no longer used as UID, but instead just a global counter of all blocks (lines)
 let csvFileExport: CsvRow[][];
+let vaultFullPath = "";
 const myRoamUser = { ":user/uid": "R1S40rNV4ANUNdGed7VaElqiO783" }
 
 // Remember to rename these classes and interfaces!
@@ -76,7 +78,7 @@ export default class MyPlugin extends Plugin {
     settings: MyPluginSettings;
 
     async onload() {
-        console.log("loading plugin: " + pluginName);
+        console.log("loading plugin: " + pluginName);
         await this.loadSettings();
 
         // Trigger the export to CSV with command palette
@@ -102,7 +104,7 @@ export default class MyPlugin extends Plugin {
     }
 
     onunload() {
-        console.log("Unloading plugin: " + pluginName);
+        console.log("Unloading plugin: " + pluginName);
     }
 
     async loadSettings() {
@@ -152,18 +154,24 @@ async function csvToJson() {
 async function exportToCsv(thisApp: App, thisPlugin: MyPlugin) {
     csvUid = 1;
     csvFileExport = [];
-    const rootFolder: TFolder = thisApp.vault.getRoot();
+    if (app.vault.adapter instanceof FileSystemAdapter) {
+        // Example: 'C:\Users\ShawnMurphy\...\Obsidian\Vaults\VAULT_NAME'
+        vaultFullPath = app.vault.adapter.getBasePath();
+    }
+    console.log("vaultFullPath:", vaultFullPath);
+    const rootFolder: TFolder = thisApp.vault.getRoot(); // Example: "/"
     console.log(`starting the looping for the export`);
-    await getFilesFromFolder(thisApp, rootFolder, 0);
+    await getFilesFromFolder(thisApp, rootFolder, "");
     console.log(`DONE with the looping for the export`);
     await writeCsvFile(thisApp, csvFileExport);
     console.log(`FINISHED the export and writing to file`);
 }
 
-async function getFilesFromFolder(thisApp: App, thisFolder: TFolder, parentFolderId: number) {
-    //console.log(`    Looping through FOLDER: "${thisFolder.path}"`);
-    const thisFolderId = await outputFolderToCsv(thisApp, thisFolder, parentFolderId);
+async function getFilesFromFolder(thisApp: App, thisFolder: TFolder, parentFolderId: HashUid) {
+    console.log(`    Looping through FOLDER: "${thisFolder.path}"`);
+    const thisFolderId: HashUid = await outputFolderToCsv(thisApp, thisFolder, parentFolderId);
     const fileExtToExport: string[] = ["md"];
+    const fileExcludeTerms: string[] = [".excalidraw"];
     const childrenFilesAndFolders: TAbstractFile[] = thisFolder.children;
     for (const eachFileOrFolder of childrenFilesAndFolders) {
         if (eachFileOrFolder instanceof TFolder) {
@@ -173,13 +181,27 @@ async function getFilesFromFolder(thisApp: App, thisFolder: TFolder, parentFolde
             //TFile
             const thisFile: TFile = eachFileOrFolder;
             if (fileExtToExport.includes(thisFile.extension)) {
-                await outputFileToCsv(thisApp, thisFile, thisFolderId);
+                let excludeFile: boolean = false;
+                fileExcludeTerms.forEach(term => {
+                    if(excludeFile) { return; }
+                    if (thisFile.basename.indexOf(term) > -1) {
+                        excludeFile = true;
+                    }
+                });
+                if (!excludeFile) {
+                    await outputFileToCsv(thisApp, thisFile, thisFolderId);
+                }
             }
         }
     }
 }
 
-async function outputFolderToCsv(thisApp: App, thisFolder: TFolder, parentFolderId: number) {
+async function outputFolderToCsv(thisApp: App, thisFolder: TFolder, parentFolderId: HashUid) {
+    const fullPath = `${vaultFullPath}` + "\\" + `${thisFolder.path}`;
+    console.log(fullPath);
+    const foldPathAbs = cleanString(fullPath);
+    const folderHash: HashUid = getStringHash(fullPath);
+    console.log(`    folderHash: ${folderHash}`);
     let foldName = thisFolder.name;
     if (foldName === "") { foldName = "/" }
     foldName = cleanString(foldName);
@@ -197,7 +219,7 @@ async function outputFolderToCsv(thisApp: App, thisFolder: TFolder, parentFolder
     foldPath = cleanString(foldPath);
     let csvFolder: CsvRow[] = [];
     const folderRow: CsvRow = {
-        uid: csvUid,
+        uid: folderHash,
         title: foldName,
         parent: parentFolderId,
         block: "",
@@ -205,7 +227,8 @@ async function outputFolderToCsv(thisApp: App, thisFolder: TFolder, parentFolder
         created: null,
         modified: null,
         folderParent: foldPar,
-        folderPath: foldPath,
+        folderPathRel: foldPath,
+        folderPathAbs: foldPathAbs,
         fileName: null,
         fileExt: null,
         rowType: rowTypes.folder,
@@ -217,17 +240,20 @@ async function outputFolderToCsv(thisApp: App, thisFolder: TFolder, parentFolder
     return folderRow.uid;
 }
 
-async function outputFileToCsv(thisApp: App, thisFile: TFile, parentFolderId: number) {
+async function outputFileToCsv(thisApp: App, thisFile: TFile, parentFolderId: HashUid) {
     //console.log(`        Looping through FILE: "${thisFile.basename}"`);
+    const fileHash: HashUid = `${parentFolderId}-${getStringHash(thisFile.basename)}`;
+    //console.log(`        fileHash: ${fileHash}`);
     let foldPar = thisFile.parent.name;
     if (foldPar === "" || !foldPar) { foldPar = "/" }
     foldPar = cleanString(foldPar);
     const foldPath = cleanString(thisFile.parent.path);
+    const foldPathAbs = cleanString(`${vaultFullPath}` + "\\" + `${thisFile.parent.path}`);
     const fileNm = cleanString(thisFile.basename);
     const fileEx = cleanString(thisFile.extension);
     let csvFile: CsvRow[] = [];
     const fileRow: CsvRow = {
-        uid: csvUid,
+        uid: fileHash,
         title: cleanString(thisFile.basename),
         parent: parentFolderId,
         block: "",
@@ -235,7 +261,8 @@ async function outputFileToCsv(thisApp: App, thisFile: TFile, parentFolderId: nu
         created: new Date(thisFile.stat.ctime),
         modified: new Date(thisFile.stat.mtime),
         folderParent: foldPar,
-        folderPath: foldPath,
+        folderPathRel: foldPath,
+        folderPathAbs: foldPathAbs,
         fileName: fileNm,
         fileExt: fileEx,
         rowType: rowTypes.file,
@@ -248,8 +275,9 @@ async function outputFileToCsv(thisApp: App, thisFile: TFile, parentFolderId: nu
     let lnCtr: number = 1;
     allLines.forEach(eachLine => {
         if (exportBlankLines || eachLine !== "") {
+            const lineHash: HashUid = `${fileHash}-${lnCtr}-${getStringHash(eachLine)}`;
             const thisRow: CsvRow = {
-                uid: csvUid,
+                uid: lineHash,
                 title: "",
                 parent: fileRow.uid,
                 block: cleanString(eachLine),
@@ -257,7 +285,8 @@ async function outputFileToCsv(thisApp: App, thisFile: TFile, parentFolderId: nu
                 created: new Date(thisFile.stat.ctime),
                 modified: new Date(thisFile.stat.mtime),
                 folderParent: foldPar,
-                folderPath: foldPath,
+                folderPathRel: foldPath,
+                folderPathAbs: foldPathAbs,
                 fileName: fileNm,
                 fileExt: fileEx,
                 rowType: rowTypes.block,
@@ -297,7 +326,54 @@ async function writeCsvFile(thisApp: App, theCsvFile: CsvRow[][]) {
 }
 
 function cleanString(theString: string) {
-    theString = theString.replace(/"/g, `""`);
-    theString = `"${theString}"`;
+    let needToEscape = false;
+    if (theString.includes(",")) {
+        needToEscape = true;
+    } else if (theString.includes("\n")) {
+        needToEscape = true;
+    } else if (theString.includes("\r")) {
+        needToEscape = true;
+    }
+
+    if (theString.includes('"')) {
+        needToEscape = true;
+        theString = theString.replace(/"/g, `""`);
+    }
+
+    if (needToEscape) {
+        theString = `"${theString}"`;
+    }
+
     return theString;
+}
+
+function getStringHash(inputString: string) {
+    let hash: number = 0;
+    let strLen: number = inputString.length;
+    const origStrLen: number = strLen;
+    // Based on testing this was deemed a good point to cut off strings above this length in combination with the low likelihood of strings being greater than 10k that often (corner case protection)
+    const maxLength: number = 10000;
+    if (origStrLen > maxLength) {
+        const maxHalf: number = maxLength / 2;
+        const firstHalf: string = inputString.substring(0, maxHalf);
+        const lastHalf: string = inputString.substring(strLen - maxHalf);
+        inputString = `${firstHalf}${lastHalf}`;
+        strLen = inputString.length;
+    }
+    // Iterating backwards is technically faster
+    for (let i = strLen - 1; i >= 0; i--) {
+        const eachChar: number = inputString.charCodeAt(i);
+        // " | 0" at end makes it 32-bit int, optimizing for speed in JS engines.
+        hash = (hash << 5) - hash + eachChar | 0;
+        //hash = hash & hash; // Convert to 32bit int (dont need w/ optimization above)
+    }
+    //hash = new Uint32Array([hash])[0].toString(36); // This is slower than keeping as int
+    let finalHash: string = "";
+    if (origStrLen > maxLength) {
+        // Adding original string length to hash incase longer than max and something changed in the text in the middle part of the string that was not used for the hash
+        finalHash = `${hash}-${origStrLen}`;
+    } else {
+        finalHash = `${hash}`;
+    }
+    return finalHash;
 }

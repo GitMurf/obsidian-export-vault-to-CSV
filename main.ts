@@ -67,11 +67,15 @@ const myRoamUser = { ":user/uid": "R1S40rNV4ANUNdGed7VaElqiO783" }
 // Remember to rename these classes and interfaces!
 
 interface MyPluginSettings {
-    mySetting: string;
+    markdownBlocks: boolean;
+    markdownTables: boolean;
+    codeBlocks: boolean;
 }
 
 const DEFAULT_SETTINGS: MyPluginSettings = {
-    mySetting: 'default'
+    markdownBlocks: false,
+    markdownTables: true,
+    codeBlocks: true
 }
 
 export default class MyPlugin extends Plugin {
@@ -126,20 +130,75 @@ class SampleSettingTab extends PluginSettingTab {
 
     display(): void {
         const { containerEl } = this;
-
         containerEl.empty();
-
-        containerEl.createEl('h2', { text: 'Settings for my awesome plugin.' });
+        containerEl.createEl('h2', { text: 'Nolocron Export to CSV' });
 
         new Setting(containerEl)
-            .setName('Setting #1')
-            .setDesc('It\'s a secret')
-            .addText(text => text
-                .setPlaceholder('Enter your secret')
-                .setValue(this.plugin.settings.mySetting)
+            .setName(createFragment((innerFrag) => {
+                innerFrag.createEl('h3', { text: `Markdown Blocks: Treat consecutive lines as a single block in Nolocron`, cls: 'v2csv-setting' });
+            }))
+            .setDesc(createFragment((innerFrag) => {
+                innerFrag.createEl('span', { text: `Strict markdown specs ignore single line breaks` });
+                innerFrag.createEl('br');
+                innerFrag.createEl('br');
+                innerFrag.createEl('strong', { text: 'Enabled:' });
+                innerFrag.createEl('span', { text: ` Consecutive lines with single lines breaks will be exported together as a single block` });
+                innerFrag.createEl('br');
+                innerFrag.createEl('strong', { text: 'Disabled (default):' });
+                innerFrag.createEl('span', { text: ` Single line breaks will be exported separately as their own blocks` });
+            }))
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.markdownBlocks)
                 .onChange(async (value) => {
-                    console.log('Secret: ' + value);
-                    this.plugin.settings.mySetting = value;
+                    this.plugin.settings.markdownBlocks = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName(createFragment((innerFrag) => {
+                innerFrag.createEl('strong', { text: 'Markdown Tables' });
+                innerFrag.createEl('span', { text: `: Store entire table as a single block in Nolocron` });
+                innerFrag.createEl('br');
+            }))
+            .setDesc(createFragment((innerFrag) => {
+                innerFrag.createEl('span', { text: `Markdown Tables are made up of a line for the header row as well as lines for each row in the table` });
+                innerFrag.createEl('br');
+                innerFrag.createEl('strong', { text: 'Note:' });
+                innerFrag.createEl('span', { text: ` If you disable this setting Nolocron can still render all blocks together as a single table` });
+                innerFrag.createEl('br');
+                innerFrag.createEl('br');
+                innerFrag.createEl('strong', { text: 'Enabled (default):' });
+                innerFrag.createEl('span', { text: ` All lines for a markdown table will be exported together as a single block` });
+                innerFrag.createEl('br');
+                innerFrag.createEl('strong', { text: 'Disabled:' });
+                innerFrag.createEl('span', { text: ` Each line in a markdown table will be exported separately as their own blocks` });
+            }))
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.markdownTables)
+                .onChange(async (value) => {
+                    this.plugin.settings.markdownTables = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName(`Code Blocks: Store entire code block as a single block in Nolocron`)
+            .setDesc(createFragment((innerFrag) => {
+                innerFrag.createEl('span', { text: `Code blocks are comprised of multiple lines fenced between a pair of triple backticks (\`\`\`)` });
+                innerFrag.createEl('br');
+                innerFrag.createEl('strong', { text: 'Note:' });
+                innerFrag.createEl('span', { text: ` If you disable this setting Nolocron can still render all blocks together as a single code block` });
+                innerFrag.createEl('br');
+                innerFrag.createEl('br');
+                innerFrag.createEl('strong', { text: 'Enabled (default):' });
+                innerFrag.createEl('span', { text: ` All lines within the fenced code block will be exported together as a single block` });
+                innerFrag.createEl('br');
+                innerFrag.createEl('strong', { text: 'Disabled:' });
+                innerFrag.createEl('span', { text: ` Each line within the fenced code block will be exported separately as their own blocks` });
+            }))
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.codeBlocks)
+                .onChange(async (value) => {
+                    this.plugin.settings.codeBlocks = value;
                     await this.plugin.saveSettings();
                 }));
     }

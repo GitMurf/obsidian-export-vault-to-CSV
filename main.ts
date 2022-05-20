@@ -40,6 +40,11 @@ interface CsvRow {
     rowType: string;
     blockType: string;
 }
+interface ParentHierarchy {
+    currentParent: HashUid;
+    parentType: string;
+    parentLevel: number;
+}
 type CsvRowKey = keyof CsvRow;
 const pluginName = 'Export Vault to CSV';
 const CsvHeadersCore: string[] = ["uid","string","parent","order","create-time","edit-time"];
@@ -345,9 +350,19 @@ async function outputFileToCsv(thisPlugin: MyPlugin, thisApp: App, thisFile: TFi
     csvUid++;
     const fileCont = await thisApp.vault.read(thisFile);
     const allLines = fileCont.split("\n");
+    let curParent = fileRow.uid;
+    let curParentObj: ParentHierarchy = {
+        currentParent: curParent,
+        parentType: "file",
+        parentLevel: 0
+    }
+    let parentBreadcrumb: ParentHierarchy[] = [];
+    parentBreadcrumb.push(curParentObj);
+    let nextParentObj = curParentObj;
     for (let i = 0; i < allLines.length; i++) {
         const eachLine = allLines[i];
         let lnCtr: number = i + 1;
+        curParent = parentBreadcrumb[parentBreadcrumb.length - 1].currentParent;
         if (exportBlankLines || eachLine !== "") {
             let blockString: string = eachLine;
             // Find next blank line
@@ -394,7 +409,7 @@ async function outputFileToCsv(thisPlugin: MyPlugin, thisApp: App, thisFile: TFi
                 blockString = quoteStr;
                 i = endOfQuote;
             } else if (eachLine.startsWith("#")) { // Check if heading
-                
+
             } else if (eachLine.trim().match(/^(- |\* |[1-9]\. |[1-9]\) )/)) { // Check if list
                 
             } else if (i + 1 < nextBlankLine) { // Check if markdown block with consecutive non-blank lines
@@ -411,11 +426,31 @@ async function outputFileToCsv(thisPlugin: MyPlugin, thisApp: App, thisFile: TFi
                 }
             }
             const blockHash: HashUid = `${fileHash}-${lnCtr}-${getStringHash(blockString)}`;
+            if (eachLine.startsWith("#")) {
+                const headingLevel = eachLine.split(' ')[0].length;
+                const previousHeadingLevel = parentBreadcrumb[parentBreadcrumb.length - 1].parentLevel;
+                console.log("curHeadingLevel:", headingLevel, "previousHeadingLevel:", previousHeadingLevel);
+                console.log(parentBreadcrumb);
+                if (headingLevel > previousHeadingLevel) {
+
+                } else if (headingLevel <= previousHeadingLevel) {
+                    while (headingLevel <= parentBreadcrumb[parentBreadcrumb.length - 1].parentLevel) {
+                        parentBreadcrumb.pop();
+                    }
+                }
+                curParent = parentBreadcrumb[parentBreadcrumb.length - 1].currentParent;
+                parentBreadcrumb.push({
+                    currentParent: blockHash,
+                    parentType: "heading",
+                    parentLevel: headingLevel
+                });
+                console.log(parentBreadcrumb);
+            }
             const thisRow: CsvRow = {
                 uid: blockHash,
                 //title: "",
                 block: cleanString(blockString),
-                parent: fileRow.uid,
+                parent: curParent,
                 order: lnCtr,
                 created: new Date(thisFile.stat.ctime),
                 modified: new Date(thisFile.stat.mtime),

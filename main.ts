@@ -26,23 +26,37 @@ interface RoamBlockBlock extends RoamBlock {
 type HashUid = string; // Now using the getStringHash function to create a unique ID for each block
 interface CsvRow {
     uid: HashUid;
-    title: string;
-    parent: HashUid;
+    //title: string;
     block: string;
+    parent: HashUid;
     order: number;
     created: Date;
     modified: Date;
-    folderParent: string;
-    folderPathRel: string;
+    //folderParent: string;
+    //folderPathRel: string;
     folderPathAbs: string;
-    fileName: string;
+    //fileName: string;
     fileExt: string;
     rowType: string;
     blockType: string;
 }
+type CsvRowKey = keyof CsvRow;
 const pluginName = 'Export Vault to CSV';
-const CsvHeadersCore = "uid,title,parent,string,order,create-time";
-const CsvHeadersAdd = "edit-time,folder,folder-path-rel,folder-path-abs,filename,file-ext,row-type,block-type";
+const CsvHeadersCore: string[] = ["uid","string","parent","order","create-time","edit-time"];
+const CsvHeadersAdd: string[] = ["path-absolute", "file-ext", "row-type", "block-type"];
+const CsvHeaderToFieldMapping = {
+    "uid": "uid",
+    "string": "block",
+    "parent": "parent",
+    "order": "order",
+    "create-time": "created",
+    "edit-time": "modified",
+    "path-absolute": "folderPathAbs",
+    "file-ext": "fileExt",
+    "row-type": "rowType",
+    "block-type": "blockType"
+}
+type HeaderFieldKey = keyof typeof CsvHeaderToFieldMapping;
 const exportBlankLines: boolean = true;
 const rowTypes = {
     folder: "folder",
@@ -279,17 +293,17 @@ async function outputFolderToCsv(thisApp: App, thisFolder: TFolder, parentFolder
     let csvFolder: CsvRow[] = [];
     const folderRow: CsvRow = {
         uid: folderHash,
-        title: foldName,
+        //title: foldName,
+        block: foldName,
         parent: parentFolderId,
-        block: "",
         order: -1,
         created: null,
         modified: null,
-        folderParent: foldPar,
-        folderPathRel: foldPath,
+        //folderParent: foldPar,
+        //folderPathRel: foldPath,
         folderPathAbs: foldPathAbs,
-        fileName: null,
-        fileExt: null,
+        //fileName: null,
+        fileExt: "",
         rowType: rowTypes.folder,
         blockType: blockTypes.folder
     }
@@ -313,16 +327,16 @@ async function outputFileToCsv(thisApp: App, thisFile: TFile, parentFolderId: Ha
     let csvFile: CsvRow[] = [];
     const fileRow: CsvRow = {
         uid: fileHash,
-        title: cleanString(thisFile.basename),
+        //title: cleanString(thisFile.basename),
+        block: cleanString(thisFile.basename),
         parent: parentFolderId,
-        block: "",
         order: 0,
         created: new Date(thisFile.stat.ctime),
         modified: new Date(thisFile.stat.mtime),
-        folderParent: foldPar,
-        folderPathRel: foldPath,
-        folderPathAbs: foldPathAbs,
-        fileName: fileNm,
+        //folderParent: foldPar,
+        //folderPathRel: foldPath,
+        folderPathAbs: null,
+        //fileName: fileNm,
         fileExt: fileEx,
         rowType: rowTypes.file,
         blockType: blockTypes.file
@@ -337,17 +351,17 @@ async function outputFileToCsv(thisApp: App, thisFile: TFile, parentFolderId: Ha
             const lineHash: HashUid = `${fileHash}-${lnCtr}-${getStringHash(eachLine)}`;
             const thisRow: CsvRow = {
                 uid: lineHash,
-                title: "",
-                parent: fileRow.uid,
+                //title: "",
                 block: cleanString(eachLine),
+                parent: fileRow.uid,
                 order: lnCtr,
                 created: new Date(thisFile.stat.ctime),
                 modified: new Date(thisFile.stat.mtime),
-                folderParent: foldPar,
-                folderPathRel: foldPath,
-                folderPathAbs: foldPathAbs,
-                fileName: fileNm,
-                fileExt: fileEx,
+                //folderParent: foldPar,
+                //folderPathRel: foldPath,
+                folderPathAbs: null,
+                //fileName: fileNm,
+                fileExt: null,
                 rowType: rowTypes.block,
                 blockType: blockTypes.line
             }
@@ -368,10 +382,25 @@ async function writeCsvFile(thisApp: App, theCsvFile: CsvRow[][]) {
     const utfBOM = `\ufeff`;
     let csvOutputFileName = 'VaultToCsv';
     csvOutputFileName += `_${window.moment().format('YYYY_MM_DD_HHmmss')}`;
-    let csvData: string = `${CsvHeadersCore},${CsvHeadersAdd}`;
+    let csvData: string = `${CsvHeadersCore.join(",")},${CsvHeadersAdd.join(",")}`;
     theCsvFile.forEach(eachFile => {
         eachFile.forEach(eachRow => {
-            const rowString = Object.values(eachRow).join(",");
+            let rowString = "";
+            CsvHeadersCore.forEach(eachHeader => {
+                const headerName = eachHeader as HeaderFieldKey;
+                const objFieldName = CsvHeaderToFieldMapping[headerName] as CsvRowKey;
+                const valueString = eachRow[objFieldName] ? eachRow[objFieldName] : "";
+                rowString += `${valueString},`;
+            });
+            CsvHeadersAdd.forEach(eachHeader => {
+                const headerName = eachHeader as HeaderFieldKey;
+                const objFieldName = CsvHeaderToFieldMapping[headerName] as CsvRowKey;
+                const valueString = eachRow[objFieldName] ? eachRow[objFieldName] : "";
+                rowString += `${valueString},`;
+            });
+            //remove the trailing leftover comma
+            rowString = rowString.substring(0, rowString.length - 1);
+            //const rowString = Object.values(eachRow).join(",");
             csvData += `\n${rowString}`;
         })
     })

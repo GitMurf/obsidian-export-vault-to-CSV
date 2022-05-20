@@ -234,22 +234,22 @@ async function exportToCsv(thisApp: App, thisPlugin: MyPlugin) {
     console.log("vaultFullPath:", vaultFullPath);
     const rootFolder: TFolder = thisApp.vault.getRoot(); // Example: "/"
     console.log(`starting the looping for the export`);
-    await getFilesFromFolder(thisApp, rootFolder, "");
+    await getFilesFromFolder(thisPlugin, thisApp, rootFolder, "");
     console.log(`DONE with the looping for the export`);
     await writeCsvFile(thisApp, csvFileExport);
     console.log(`FINISHED the export and writing to file`);
 }
 
-async function getFilesFromFolder(thisApp: App, thisFolder: TFolder, parentFolderId: HashUid) {
+async function getFilesFromFolder(thisPlugin: MyPlugin, thisApp: App, thisFolder: TFolder, parentFolderId: HashUid) {
     console.log(`    Looping through FOLDER: "${thisFolder.path}"`);
-    const thisFolderId: HashUid = await outputFolderToCsv(thisApp, thisFolder, parentFolderId);
+    const thisFolderId: HashUid = outputFolderToCsv(thisFolder, parentFolderId);
     const fileExtToExport: string[] = ["md"];
     const fileExcludeTerms: string[] = [".excalidraw"];
     const childrenFilesAndFolders: TAbstractFile[] = thisFolder.children;
     for (const eachFileOrFolder of childrenFilesAndFolders) {
         if (eachFileOrFolder instanceof TFolder) {
             //TFolder - recursive call to getFilesFromFolder() function
-            await getFilesFromFolder(thisApp, eachFileOrFolder, thisFolderId);
+            await getFilesFromFolder(thisPlugin, thisApp, eachFileOrFolder, thisFolderId);
         } else if (eachFileOrFolder instanceof TFile) {
             //TFile
             const thisFile: TFile = eachFileOrFolder;
@@ -262,14 +262,14 @@ async function getFilesFromFolder(thisApp: App, thisFolder: TFolder, parentFolde
                     }
                 });
                 if (!excludeFile) {
-                    await outputFileToCsv(thisApp, thisFile, thisFolderId);
+                    await outputFileToCsv(thisPlugin, thisApp, thisFile, thisFolderId);
                 }
             }
         }
     }
 }
 
-async function outputFolderToCsv(thisApp: App, thisFolder: TFolder, parentFolderId: HashUid) {
+function outputFolderToCsv(thisFolder: TFolder, parentFolderId: HashUid) {
     const fullPath = `${vaultFullPath}` + "\\" + `${thisFolder.path}`;
     console.log(fullPath);
     const foldPathAbs = cleanString(fullPath);
@@ -313,7 +313,7 @@ async function outputFolderToCsv(thisApp: App, thisFolder: TFolder, parentFolder
     return folderRow.uid;
 }
 
-async function outputFileToCsv(thisApp: App, thisFile: TFile, parentFolderId: HashUid) {
+async function outputFileToCsv(thisPlugin: MyPlugin, thisApp: App, thisFile: TFile, parentFolderId: HashUid) {
     //console.log(`        Looping through FILE: "${thisFile.basename}"`);
     const fileHash: HashUid = `${parentFolderId}-${getStringHash(thisFile.basename)}`;
     //console.log(`        fileHash: ${fileHash}`);
@@ -398,12 +398,16 @@ async function outputFileToCsv(thisApp: App, thisFile: TFile, parentFolderId: Ha
             } else if (eachLine.trim().match(/^(- |\* |[1-9]\. |[1-9]\) )/)) { // Check if list
                 
             } else if (i + 1 < nextBlankLine) { // Check if markdown block with consecutive non-blank lines
-                // Get next line that is not blank, header, table, code, quote, list etc.
-                let endOfMdBlock: number = findEndOfMdSection(allLines, i);
-                if (i < endOfMdBlock) {
-                    const markdownStr = getStringStartEnd(allLines, i, endOfMdBlock);
-                    blockString = markdownStr;
-                    i = endOfMdBlock;
+                if (thisPlugin.settings.markdownBlocks === true) {
+                    // Get next line that is not blank, header, table, code, quote, list etc.
+                    let endOfMdBlock: number = findEndOfMdSection(allLines, i);
+                    if (i < endOfMdBlock) {
+                        const markdownStr = getStringStartEnd(allLines, i, endOfMdBlock);
+                        blockString = markdownStr;
+                        i = endOfMdBlock;
+                    }
+                } else {
+                    // Markdown blocks should be split into their own lines so leave as is
                 }
             }
             const blockHash: HashUid = `${fileHash}-${lnCtr}-${getStringHash(blockString)}`;

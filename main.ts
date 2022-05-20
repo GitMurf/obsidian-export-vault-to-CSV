@@ -345,14 +345,72 @@ async function outputFileToCsv(thisApp: App, thisFile: TFile, parentFolderId: Ha
     csvUid++;
     const fileCont = await thisApp.vault.read(thisFile);
     const allLines = fileCont.split("\n");
-    let lnCtr: number = 1;
-    allLines.forEach(eachLine => {
+    for (let i = 0; i < allLines.length; i++) {
+        const eachLine = allLines[i];
+        let lnCtr: number = i + 1;
         if (exportBlankLines || eachLine !== "") {
-            const lineHash: HashUid = `${fileHash}-${lnCtr}-${getStringHash(eachLine)}`;
+            let blockString: string = eachLine;
+            // Find next blank line
+            let nextBlankLine: number = i + 1;
+            while (nextBlankLine < allLines.length && allLines[nextBlankLine] !== "") {
+                nextBlankLine++;
+                if(nextBlankLine >= allLines.length) { break; }
+            }
+
+            if (eachLine === "") {
+
+            } else if(eachLine === "---" && i === 0) { // YAML front matter
+                let endOfYaml: number = i + 1;
+                const lookFor = "---";
+                while (endOfYaml < allLines.length && !allLines[endOfYaml].startsWith(lookFor)) {
+                    endOfYaml++;
+                }
+                if (endOfYaml >= allLines.length) { endOfYaml = allLines.length - 1; }
+                // Get YAML full string
+                const yamlStr = getStringStartEnd(allLines, i, endOfYaml);
+                blockString = yamlStr;
+                i = endOfYaml;
+            } else if (eachLine.startsWith("|")) { // Check if markdown table
+                let endOfTable: number = findEndOfMdSection(allLines, i, "|");
+                // Get markdown table full string
+                const tableStr = getStringStartEnd(allLines, i, endOfTable);
+                blockString = tableStr;
+                i = endOfTable;
+            } else if (eachLine.startsWith("```")) { // Check if code block
+                let endOfCode: number = i + 1;
+                const lookFor = "```";
+                while (endOfCode < allLines.length && !allLines[endOfCode].startsWith(lookFor)) {
+                    endOfCode++;
+                }
+                if (endOfCode >= allLines.length) { endOfCode = allLines.length - 1; }
+                // Get code block full string
+                const codeBlockStr = getStringStartEnd(allLines, i, endOfCode);
+                blockString = codeBlockStr;
+                i = endOfCode;
+            } else if (eachLine.startsWith(">")) { // Check if quote
+                // Each line does NOT have to have a > in front so just look for next blank line (or another md syntax)
+                let endOfQuote: number = findEndOfMdSection(allLines, i, ">");
+                const quoteStr = getStringStartEnd(allLines, i, endOfQuote);
+                blockString = quoteStr;
+                i = endOfQuote;
+            } else if (eachLine.startsWith("#")) { // Check if heading
+                
+            } else if (eachLine.trim().match(/^(- |\* |[1-9]\. |[1-9]\) )/)) { // Check if list
+                
+            } else if (i + 1 < nextBlankLine) { // Check if markdown block with consecutive non-blank lines
+                // Get next line that is not blank, header, table, code, quote, list etc.
+                let endOfMdBlock: number = findEndOfMdSection(allLines, i);
+                if (i < endOfMdBlock) {
+                    const markdownStr = getStringStartEnd(allLines, i, endOfMdBlock);
+                    blockString = markdownStr;
+                    i = endOfMdBlock;
+                }
+            }
+            const blockHash: HashUid = `${fileHash}-${lnCtr}-${getStringHash(blockString)}`;
             const thisRow: CsvRow = {
-                uid: lineHash,
+                uid: blockHash,
                 //title: "",
-                block: cleanString(eachLine),
+                block: cleanString(blockString),
                 parent: fileRow.uid,
                 order: lnCtr,
                 created: new Date(thisFile.stat.ctime),
@@ -369,8 +427,39 @@ async function outputFileToCsv(thisApp: App, thisFile: TFile, parentFolderId: Ha
             csvUid++;
             lnCtr++;
         }
-    })
+    }
     csvFileExport.push(csvFile);
+}
+
+function getStringStartEnd(allLines: string[], startLn: number, endLn: number): string {
+    if (startLn === endLn) {
+        return allLines[startLn];
+    }
+    // Loop through start and end lines concatenating the string
+    let newString: string = "";
+    for (let i = startLn; i <= endLn; i++) {
+        newString += allLines[i] + "\n";
+    }
+    // Remove last newline
+    newString = newString.slice(0, -1);
+    return newString;
+}
+
+// This looks for the next blank line and/or a line that starts with a special md character for a new section
+function findEndOfMdSection(allLines: string[], currentLn: number, curMdChar: string = null): number {
+    // Get next line that is not blank, header, table, code, quote, list etc.
+    let nextLine: number = currentLn + 1;
+    if (nextLine >= allLines.length) { return allLines.length - 1; }
+    let nextLineStr = allLines[nextLine].trim();
+    while (nextLineStr !== "" && (!nextLineStr.match(/^(#+ |\||```|>|- |\* |[1-9]\. |[1-9]\) )/) || nextLineStr.startsWith(curMdChar))) {
+        nextLine++;
+        if (nextLine >= allLines.length) {
+            break;
+        }
+        nextLineStr = allLines[nextLine].trim();
+    }
+    nextLine--;
+    return nextLine;
 }
 
 async function writeCsvFile(thisApp: App, theCsvFile: CsvRow[][]) {
